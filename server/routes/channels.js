@@ -98,14 +98,23 @@ router.get('/:connId/series/:seriesId', async (req, res) => {
   }
 });
 
-// EPG
-const BASE64_RE = /^[A-Za-z0-9+/\n\r]+=*$/;
+// EPG - Xtream API often base64-encodes title/description
+// Only decode if it looks like proper base64: length divisible by 4 with padding,
+// no spaces, and decodes to clean printable text
 function tryDecodeBase64(str) {
-  if (!str || str.length < 4 || !BASE64_RE.test(str.trim())) return str;
+  if (!str) return str;
+  const trimmed = str.trim();
+  // Must be at least 4 chars, length divisible by 4, no spaces/punctuation outside base64 charset
+  if (trimmed.length < 4 || trimmed.length % 4 !== 0) return str;
+  if (/[^A-Za-z0-9+/=]/.test(trimmed)) return str;
+  // Must have valid padding (0-2 trailing '=' chars)
+  if (/={3,}/.test(trimmed)) return str;
   try {
-    const decoded = Buffer.from(str, 'base64').toString('utf-8');
-    // Verify the decoded result is printable text (not binary garbage)
-    if (/[\x00-\x08\x0E-\x1F]/.test(decoded)) return str;
+    const decoded = Buffer.from(trimmed, 'base64').toString('utf-8');
+    // Reject if decoded text contains control characters (binary garbage)
+    if (/[\x00-\x08\x0E-\x1F\x7F]/.test(decoded)) return str;
+    // Reject if decoded is empty or shorter than 1 char
+    if (!decoded) return str;
     return decoded;
   } catch {
     return str;
@@ -142,9 +151,11 @@ router.get('/:connId/search', async (req, res) => {
       return res.json([]);
     }
 
+    const typeFilter = req.query.type || null; // 'live', 'movie', 'series'
     const index = await xtream.buildSearchIndex(conn);
     const results = [];
     for (const item of index.items) {
+      if (typeFilter && item.type !== typeFilter) continue;
       if (item._name.includes(query)) {
         const { _name, ...rest } = item;
         results.push(rest);

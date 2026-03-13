@@ -11,29 +11,43 @@ function getSearchIndex(connKey) {
   return null;
 }
 
+// Longer timeout (60s) for index building since providers can have 90K+ items
+const INDEX_FETCH_TIMEOUT = 60000;
+
 export async function buildSearchIndex(conn) {
   const connKey = conn.server_url + conn.username;
   const existing = getSearchIndex(connKey);
   if (existing) return existing;
 
-  const [live, vod, series] = await Promise.all([
-    getLiveStreams(conn).catch(() => []),
-    getVodStreams(conn).catch(() => []),
-    getSeries(conn).catch(() => []),
+  const results = await Promise.allSettled([
+    getLiveStreams(conn, null, INDEX_FETCH_TIMEOUT),
+    getVodStreams(conn, null, INDEX_FETCH_TIMEOUT),
+    getSeries(conn, null, INDEX_FETCH_TIMEOUT),
   ]);
 
+  const live = results[0].status === 'fulfilled' ? (results[0].value || []) : [];
+  const vod = results[1].status === 'fulfilled' ? (results[1].value || []) : [];
+  const series = results[2].status === 'fulfilled' ? (results[2].value || []) : [];
+
+  // Only cache if we got data from all three sources (avoid caching partial results)
+  const allSucceeded = results.every(r => r.status === 'fulfilled');
+
   const items = [];
-  for (const s of (live || [])) {
+  for (const s of live) {
     if (s.name) items.push({ ...s, type: 'live', _name: s.name.toLowerCase() });
   }
-  for (const s of (vod || [])) {
+  for (const s of vod) {
     if (s.name) items.push({ ...s, type: 'movie', _name: s.name.toLowerCase() });
   }
-  for (const s of (series || [])) {
+  for (const s of series) {
     if (s.name) items.push({ ...s, type: 'series', _name: s.name.toLowerCase() });
   }
 
   const entry = { items, time: Date.now() };
+  // If some fetches failed, use a short TTL so it retries sooner
+  if (!allSucceeded) {
+    entry.time = Date.now() - SEARCH_INDEX_TTL + 30000; // expires in 30s
+  }
   searchIndexes.set(connKey, entry);
   return entry;
 }
@@ -93,13 +107,13 @@ export function buildStreamUrl(conn, type, streamId, extension = 'm3u8') {
   return `${base}/${typePath}/${conn.username}/${conn.password}/${streamId}.${extension}`;
 }
 
-export async function xtreamRequest(conn, action, params = {}) {
+export async function xtreamRequest(conn, action, params = {}, timeout = 15000) {
   const key = cacheKey(conn.server_url + conn.username, action, JSON.stringify(params));
   const cached = getCached(key);
   if (cached) return cached;
 
   const url = buildApiUrl(conn, action, params);
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeout) });
   if (!res.ok) throw new Error(`Xtream API error: ${res.status}`);
   const data = await res.json();
   setCache(key, data);
@@ -119,27 +133,27 @@ export async function getLiveCategories(conn) {
   return xtreamRequest(conn, 'get_live_categories');
 }
 
-export async function getLiveStreams(conn, categoryId) {
+export async function getLiveStreams(conn, categoryId, timeout) {
   const params = categoryId ? { category_id: categoryId } : {};
-  return xtreamRequest(conn, 'get_live_streams', params);
+  return xtreamRequest(conn, 'get_live_streams', params, timeout);
 }
 
 export async function getVodCategories(conn) {
   return xtreamRequest(conn, 'get_vod_categories');
 }
 
-export async function getVodStreams(conn, categoryId) {
+export async function getVodStreams(conn, categoryId, timeout) {
   const params = categoryId ? { category_id: categoryId } : {};
-  return xtreamRequest(conn, 'get_vod_streams', params);
+  return xtreamRequest(conn, 'get_vod_streams', params, timeout);
 }
 
 export async function getSeriesCategories(conn) {
   return xtreamRequest(conn, 'get_series_categories');
 }
 
-export async function getSeries(conn, categoryId) {
+export async function getSeries(conn, categoryId, timeout) {
   const params = categoryId ? { category_id: categoryId } : {};
-  return xtreamRequest(conn, 'get_series', params);
+  return xtreamRequest(conn, 'get_series', params, timeout);
 }
 
 export async function getSeriesInfo(conn, seriesId) {

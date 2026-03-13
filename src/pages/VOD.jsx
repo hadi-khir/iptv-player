@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as api from '../api';
-import useInfiniteScroll from '../hooks/useInfiniteScroll';
 
 export default function VOD() {
   const { connId } = useParams();
@@ -9,15 +8,18 @@ export default function VOD() {
   const [categories, setCategories] = useState([]);
   const [streams, setStreams] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [favorites, setFavorites] = useState(new Set());
+  const [error, setError] = useState(null);
+
+  const debounceTimer = useRef(null);
+  const activeRequest = useRef(0);
 
   useEffect(() => {
     api.getVodCategories(connId).then(data => {
       setCategories(data || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => {});
 
     api.getFavorites(connId).then(favs => {
       setFavorites(new Set(favs.filter(f => f.stream_type === 'movie').map(f => f.stream_id)));
@@ -25,12 +27,45 @@ export default function VOD() {
   }, [connId]);
 
   useEffect(() => {
+    if (!selectedCategory) {
+      setStreams([]);
+      return;
+    }
     setLoading(true);
+    setSearchTerm('');
+    setError(null);
     api.getVodStreams(connId, selectedCategory).then(data => {
       setStreams(data || []);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(err => { setError(err.message); setLoading(false); });
   }, [connId, selectedCategory]);
+
+  const doSearch = useCallback((q) => {
+    if (q.length < 2) {
+      setStreams([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const requestId = ++activeRequest.current;
+    api.searchStreams(connId, q, 'movie').then(data => {
+      if (requestId !== activeRequest.current) return;
+      setStreams(data || []);
+      setLoading(false);
+    }).catch(err => {
+      if (requestId === activeRequest.current) { setError(err.message); setLoading(false); }
+    });
+  }, [connId]);
+
+  const handleSearch = (e) => {
+    const val = e.target.value;
+    setSearchTerm(val);
+    if (!selectedCategory) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => doSearch(val), 200);
+    }
+  };
 
   const toggleFavorite = async (stream) => {
     const id = stream.stream_id;
@@ -49,13 +84,11 @@ export default function VOD() {
     }
   };
 
-  const filtered = useMemo(() => {
-    if (!searchTerm) return streams;
-    const term = searchTerm.toLowerCase();
-    return streams.filter(s => s.name?.toLowerCase().includes(term));
-  }, [streams, searchTerm]);
+  const filtered = selectedCategory && searchTerm
+    ? streams.filter(s => s.name?.toLowerCase().includes(searchTerm.toLowerCase()))
+    : streams;
 
-  const { visibleItems, hasMore, sentinelRef } = useInfiniteScroll(filtered);
+  const showPrompt = !selectedCategory && !searchTerm && streams.length === 0 && !loading;
 
   return (
     <div className="flex h-full">
@@ -93,24 +126,36 @@ export default function VOD() {
             <input
               type="text"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Filter movies..."
+              onChange={handleSearch}
+              placeholder={selectedCategory ? "Filter movies..." : "Search all movies..."}
               className="w-full bg-surface-700 border border-surface-600/50 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:border-accent/50 transition-colors"
             />
           </div>
-          <span className="text-gray-500 text-sm">{filtered.length} movies</span>
+          {filtered.length > 0 && <span className="text-gray-500 text-sm">{filtered.length} movies</span>}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {loading ? (
+          {error ? (
+            <div className="text-center py-20 text-red-400">
+              <p className="font-semibold mb-1">Error loading data</p>
+              <p className="text-sm text-red-400/70">{error}</p>
+            </div>
+          ) : loading ? (
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin w-6 h-6 border-2 border-accent border-t-transparent rounded-full" />
+            </div>
+          ) : showPrompt ? (
+            <div className="text-center py-20 text-gray-500">
+              <svg className="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              Search for movies or select a category
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-20 text-gray-500">No movies found</div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {visibleItems.map(stream => (
+              {filtered.map(stream => (
                 <div
                   key={stream.stream_id}
                   className="group bg-surface-800 rounded-xl border border-surface-600/30 hover:border-accent/30 transition-all cursor-pointer overflow-hidden"
@@ -158,7 +203,6 @@ export default function VOD() {
               ))}
             </div>
           )}
-          {hasMore && <div ref={sentinelRef} className="h-4" />}
         </div>
       </div>
     </div>

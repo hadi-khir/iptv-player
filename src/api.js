@@ -56,8 +56,8 @@ export const getSeriesInfo = (connId, seriesId) =>
 
 export const getEpg = (connId, streamId) => request(`/channels/${connId}/epg/${streamId}`);
 
-export const searchStreams = (connId, query) =>
-  request(`/channels/${connId}/search?q=${encodeURIComponent(query)}`);
+export const searchStreams = (connId, query, type) =>
+  request(`/channels/${connId}/search?q=${encodeURIComponent(query)}${type ? `&type=${type}` : ''}`);
 
 // Favorites
 export const getFavorites = (connId) =>

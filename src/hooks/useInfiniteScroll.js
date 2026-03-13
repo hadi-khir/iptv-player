@@ -1,45 +1,29 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const PAGE_SIZE = 60;
 
 export default function useInfiniteScroll(items) {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const sentinelRef = useRef(null);
-  const observerRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  // Reset when items change
+  // Reset when the underlying list changes
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
   }, [items]);
 
-  const setSentinelRef = useCallback((node) => {
-    if (observerRef.current) {
-      observerRef.current.disconnect();
+  const onScroll = useCallback((e) => {
+    const el = e.target;
+    // Load more when scrolled within 300px of the bottom
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+      setVisibleCount((prev) => {
+        const next = prev + PAGE_SIZE;
+        return next > items.length ? items.length : next;
+      });
     }
-
-    if (node) {
-      observerRef.current = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting) {
-            setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, items.length));
-          }
-        },
-        { rootMargin: '200px' }
-      );
-      observerRef.current.observe(node);
-    }
-
-    sentinelRef.current = node;
   }, [items.length]);
-
-  useEffect(() => {
-    return () => {
-      if (observerRef.current) observerRef.current.disconnect();
-    };
-  }, []);
 
   const visibleItems = items.slice(0, visibleCount);
   const hasMore = visibleCount < items.length;
 
-  return { visibleItems, hasMore, sentinelRef: setSentinelRef };
+  return { visibleItems, hasMore, scrollRef, onScroll };
 }
