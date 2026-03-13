@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as api from '../api';
 
@@ -28,7 +28,9 @@ export default function Favorites() {
     }
   };
 
-  const filtered = filter === 'all' ? favorites : favorites.filter(f => f.stream_type === filter);
+  const filtered = useMemo(() => {
+    return filter === 'all' ? favorites : favorites.filter(f => f.stream_type === filter);
+  }, [favorites, filter]);
 
   return (
     <div className="p-6 max-w-5xl mx-auto">

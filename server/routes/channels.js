@@ -99,18 +99,40 @@ router.get('/:connId/series/:seriesId', async (req, res) => {
 });
 
 // EPG
+const BASE64_RE = /^[A-Za-z0-9+/\n\r]+=*$/;
+function tryDecodeBase64(str) {
+  if (!str || str.length < 4 || !BASE64_RE.test(str.trim())) return str;
+  try {
+    const decoded = Buffer.from(str, 'base64').toString('utf-8');
+    // Verify the decoded result is printable text (not binary garbage)
+    if (/[\x00-\x08\x0E-\x1F]/.test(decoded)) return str;
+    return decoded;
+  } catch {
+    return str;
+  }
+}
+
 router.get('/:connId/epg/:streamId', async (req, res) => {
   try {
     const conn = getConnection(req, res);
     if (!conn) return;
     const data = await xtream.getEpg(conn, req.params.streamId);
+
+    // Xtream API returns base64-encoded title/description in EPG listings
+    if (data?.epg_listings) {
+      for (const item of data.epg_listings) {
+        if (item.title) item.title = tryDecodeBase64(item.title);
+        if (item.description) item.description = tryDecodeBase64(item.description);
+      }
+    }
+
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Search across all streams
+// Search across all streams (uses pre-built index)
 router.get('/:connId/search', async (req, res) => {
   try {
     const conn = getConnection(req, res);
@@ -120,33 +142,13 @@ router.get('/:connId/search', async (req, res) => {
       return res.json([]);
     }
 
-    const [live, vod, series] = await Promise.all([
-      xtream.getLiveStreams(conn).catch(() => []),
-      xtream.getVodStreams(conn).catch(() => []),
-      xtream.getSeries(conn).catch(() => []),
-    ]);
-
+    const index = await xtream.buildSearchIndex(conn);
     const results = [];
-    for (const s of live) {
-      if (s.name && s.name.toLowerCase().includes(query)) {
-        results.push({ ...s, type: 'live' });
+    for (const item of index.items) {
+      if (item._name.includes(query)) {
+        const { _name, ...rest } = item;
+        results.push(rest);
         if (results.length >= 50) break;
-      }
-    }
-    if (results.length < 50) {
-      for (const s of vod) {
-        if (s.name && s.name.toLowerCase().includes(query)) {
-          results.push({ ...s, type: 'movie' });
-          if (results.length >= 50) break;
-        }
-      }
-    }
-    if (results.length < 50) {
-      for (const s of series) {
-        if (s.name && s.name.toLowerCase().includes(query)) {
-          results.push({ ...s, type: 'series' });
-          if (results.length >= 50) break;
-        }
       }
     }
 

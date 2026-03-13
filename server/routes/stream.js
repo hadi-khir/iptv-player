@@ -80,6 +80,93 @@ router.get('/:connId/:type/:streamId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid extension' });
     }
 
+    // Helper: rewrite URLs inside an m3u8 playlist to go through our proxy
+    // originUrl is the full URL the playlist was fetched from (used to resolve relative/absolute-path refs)
+    function rewriteM3u8(text, originUrl) {
+      const token = req.query.token || '';
+      const proxyBase = `/api/stream/${req.params.connId}/${type}/${streamId}`;
+
+      // Parse origin for resolving absolute-path URLs (e.g. /live/user/pass/123/seg.ts)
+      const parsedOrigin = new URL(originUrl);
+      const urlOrigin = parsedOrigin.origin; // e.g. http://server:port
+      const baseUrl = originUrl.substring(0, originUrl.lastIndexOf('/') + 1); // directory
+
+      return text.replace(/^(?!#)(.+)$/gm, (match) => {
+        const trimmed = match.trim();
+        if (!trimmed) return match;
+
+        // Resolve to absolute URL handling three cases:
+        // 1. http://... - already absolute
+        // 2. /path/... - absolute path, prepend origin
+        // 3. relative   - relative path, prepend base directory
+        let absoluteUrl;
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+          absoluteUrl = trimmed;
+        } else if (trimmed.startsWith('/')) {
+          absoluteUrl = urlOrigin + trimmed;
+        } else {
+          absoluteUrl = baseUrl + trimmed;
+        }
+
+        // Detect sub-playlists vs media segments
+        const isPlaylist = /\.m3u8?(\?|$)/i.test(trimmed);
+        const ext = isPlaylist ? 'm3u8' : 'ts';
+
+        return `${proxyBase}?ext=${ext}&seg=${encodeURIComponent(absoluteUrl)}&token=${encodeURIComponent(token)}`;
+      });
+    }
+
+    // Handle segment/sub-playlist proxy requests first (avoids fetching the main stream needlessly)
+    if (req.query.seg) {
+      const segUrl = req.query.seg;
+      // Validate segment URL starts with http
+      if (!segUrl.startsWith('http://') && !segUrl.startsWith('https://')) {
+        return res.status(400).json({ error: 'Invalid segment URL' });
+      }
+
+      const segResponse = await fetch(segUrl, {
+        signal: AbortSignal.timeout(30000),
+        headers: { 'User-Agent': 'IPTV Player/1.0' },
+      });
+
+      if (!segResponse.ok) {
+        console.log(`[stream] Segment fetch failed: ${segResponse.status} for ${segUrl.substring(0, 120)}`);
+        return res.status(segResponse.status).end();
+      }
+
+      res.setHeader('Cache-Control', 'no-store');
+
+      // If this is a sub-playlist (m3u8), rewrite its URLs too
+      const ct = segResponse.headers.get('content-type') || '';
+      const isM3u8 = extension === 'm3u8' || ct.includes('mpegurl') || ct.includes('m3u8') || /\.m3u8?(\?|$)/i.test(segUrl);
+
+      if (isM3u8) {
+        const text = await segResponse.text();
+        // Use final URL after redirects for resolving relative refs
+        const resolvedUrl = segResponse.url || segUrl;
+        const rewritten = rewriteM3u8(text, resolvedUrl);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(rewritten);
+        return;
+      }
+
+      if (ct) res.setHeader('Content-Type', ct);
+      const cl = segResponse.headers.get('content-length');
+      if (cl) res.setHeader('Content-Length', cl);
+
+      const segReader = segResponse.body.getReader();
+      req.on('close', () => segReader.cancel().catch(() => {}));
+
+      while (true) {
+        const { done, value } = await segReader.read();
+        if (done) break;
+        if (!res.writableEnded) res.write(Buffer.from(value));
+        else break;
+      }
+      if (!res.writableEnded) res.end();
+      return;
+    }
+
     const streamUrl = buildStreamUrl(conn, type, streamId, extension);
 
     // Forward range headers for VOD seeking support
@@ -110,65 +197,34 @@ router.get('/:connId/:type/:streamId', async (req, res) => {
     res.status(response.status);
     res.setHeader('Cache-Control', 'no-store');
 
-    // For m3u8 playlists, rewrite segment URLs to go through our proxy
+    // For m3u8 playlists, rewrite segment/sub-playlist URLs to go through our proxy
     if (extension === 'm3u8') {
+      // Check content-type: if the server returned a TS stream or binary instead of m3u8,
+      // don't try to read it as text (would hang forever on a live TS stream)
+      const ct = response.headers.get('content-type') || '';
+      const looksLikeM3u8 = ct.includes('mpegurl') || ct.includes('m3u8') || ct.includes('text') || ct.includes('utf-8') || !ct;
+
+      if (!looksLikeM3u8) {
+        // Server didn't return an m3u8 playlist - abort and let the client try other formats
+        response.body?.cancel?.().catch(() => {});
+        console.log(`[stream] m3u8 request returned non-playlist content-type: ${ct} for ${streamUrl}`);
+        return res.status(415).json({ error: `Server did not return an HLS playlist (got ${ct})` });
+      }
+
       const text = await response.text();
-      const token = req.query.token || '';
-      const proxyBase = `/api/stream/${req.params.connId}/${type}/${streamId}`;
 
-      // Rewrite .ts segment references to proxy through us
-      const rewritten = text.replace(/^(?!#)(.+)$/gm, (match) => {
-        const trimmed = match.trim();
-        if (!trimmed) return match;
-        // Extract the segment filename and proxy it as a .ts extension
-        // Xtream servers typically use relative paths for segments
-        if (trimmed.startsWith('http')) {
-          // Absolute URL - we need to proxy this too
-          // Extract just the filename to build a proxy URL
-          return `${proxyBase}?ext=ts&seg=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`;
-        }
-        // Relative path - build full URL through proxy
-        const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
-        return `${proxyBase}?ext=ts&seg=${encodeURIComponent(baseUrl + trimmed)}&token=${encodeURIComponent(token)}`;
-      });
+      // Verify it actually looks like an m3u8 (starts with #EXTM3U or has HLS tags)
+      if (!text.trim().startsWith('#EXTM3U') && !text.includes('#EXT-X-')) {
+        console.log(`[stream] m3u8 response is not a valid playlist. First 200 chars: ${text.substring(0, 200)}`);
+        return res.status(415).json({ error: 'Server did not return a valid HLS playlist' });
+      }
 
+      // Use final URL after redirects for resolving relative refs
+      const resolvedUrl = response.url || streamUrl;
+      console.log(`[stream] Rewriting m3u8 from ${resolvedUrl}, lines: ${text.split('\n').length}`);
+      const rewritten = rewriteM3u8(text, resolvedUrl);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.send(rewritten);
-      return;
-    }
-
-    // If there's a seg= param, proxy that specific segment URL instead
-    if (req.query.seg) {
-      const segUrl = req.query.seg;
-      // Validate segment URL starts with http
-      if (!segUrl.startsWith('http://') && !segUrl.startsWith('https://')) {
-        return res.status(400).json({ error: 'Invalid segment URL' });
-      }
-
-      const segResponse = await fetch(segUrl, {
-        signal: AbortSignal.timeout(30000),
-        headers: { 'User-Agent': 'IPTV Player/1.0' },
-      });
-
-      if (!segResponse.ok) {
-        return res.status(segResponse.status).end();
-      }
-
-      const ct = segResponse.headers.get('content-type');
-      if (ct) res.setHeader('Content-Type', ct);
-      const cl = segResponse.headers.get('content-length');
-      if (cl) res.setHeader('Content-Length', cl);
-
-      const segReader = segResponse.body.getReader();
-      req.on('close', () => segReader.cancel().catch(() => {}));
-
-      while (true) {
-        const { done, value } = await segReader.read();
-        if (done) break;
-        if (!res.writableEnded) res.write(Buffer.from(value));
-        else break;
-      }
-      if (!res.writableEnded) res.end();
       return;
     }
 

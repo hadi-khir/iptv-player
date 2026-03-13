@@ -13,6 +13,7 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
   const [showControls, setShowControls] = useState(true);
   const [status, setStatus] = useState('loading'); // loading, playing, error
   const [statusMsg, setStatusMsg] = useState('Connecting...');
+  const [debugInfo, setDebugInfo] = useState([]);
   const containerRef = useRef(null);
   const hideTimer = useRef(null);
   const attemptRef = useRef(0);
@@ -77,6 +78,9 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
+      const detail = `${data.type}/${data.details}${data.response ? ` (${data.response.code})` : ''}${data.url ? ` url:${data.url.substring(0, 80)}` : ''}`;
+      setDebugInfo(prev => [...prev.slice(-4), detail]);
+
       if (data.fatal && !settled) {
         settled = true;
         hls.destroy();
@@ -158,6 +162,7 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
 
     setStatus('loading');
     setStatusMsg('Connecting to stream...');
+    setDebugInfo([]);
     attemptRef.current++;
     const thisAttempt = attemptRef.current;
 
@@ -294,12 +299,28 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
   };
 
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
-      setFullscreen(true);
+    const container = containerRef.current;
+    const video = videoRef.current;
+
+    // Check if currently fullscreen (standard or webkit)
+    const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+
+    if (!isFs) {
+      // Try standard API first, then webkit (Safari/iPad), then video-level webkit (iOS)
+      if (container?.requestFullscreen) {
+        container.requestFullscreen().catch(() => {});
+      } else if (container?.webkitRequestFullscreen) {
+        container.webkitRequestFullscreen();
+      } else if (video?.webkitEnterFullscreen) {
+        // iOS/iPadOS: only the video element itself can go fullscreen
+        video.webkitEnterFullscreen();
+      }
     } else {
-      document.exitFullscreen();
-      setFullscreen(false);
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      }
     }
   };
 
@@ -313,9 +334,23 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
   };
 
   useEffect(() => {
-    const onFsChange = () => setFullscreen(!!document.fullscreenElement);
+    const onFsChange = () => setFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
     document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+
+    // iOS/iPadOS fires these on the video element when using webkitEnterFullscreen
+    const video = videoRef.current;
+    const onWebkitBegin = () => setFullscreen(true);
+    const onWebkitEnd = () => setFullscreen(false);
+    video?.addEventListener('webkitbeginfullscreen', onWebkitBegin);
+    video?.addEventListener('webkitendfullscreen', onWebkitEnd);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+      video?.removeEventListener('webkitbeginfullscreen', onWebkitBegin);
+      video?.removeEventListener('webkitendfullscreen', onWebkitEnd);
+    };
   }, []);
 
   // Keyboard controls
@@ -362,7 +397,6 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
         className="w-full h-full"
         onClick={togglePlay}
         playsInline
-        crossOrigin="anonymous"
       />
 
       {/* Loading / buffering overlay */}
@@ -370,6 +404,13 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 pointer-events-none">
           <div className="animate-spin w-10 h-10 border-3 border-accent border-t-transparent rounded-full mb-3" />
           <p className="text-gray-400 text-sm">{statusMsg}</p>
+          {debugInfo.length > 0 && (
+            <div className="mt-3 max-w-md text-center">
+              {debugInfo.map((msg, i) => (
+                <p key={i} className="text-red-400/70 text-xs truncate">{msg}</p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -380,7 +421,14 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
             <svg className="w-12 h-12 text-gray-600 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
             </svg>
-            <p className="text-gray-300 text-sm mb-4">{statusMsg}</p>
+            <p className="text-gray-300 text-sm mb-2">{statusMsg}</p>
+            {debugInfo.length > 0 && (
+              <div className="mb-4 max-w-md">
+                {debugInfo.map((msg, i) => (
+                  <p key={i} className="text-red-400/70 text-xs truncate">{msg}</p>
+                ))}
+              </div>
+            )}
             <button
               onClick={() => {
                 attemptRef.current++;

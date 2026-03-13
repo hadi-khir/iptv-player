@@ -27,7 +27,13 @@ if (process.env.NODE_ENV !== 'production') {
   app.use(cors());
 }
 
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    // Don't compress stream proxy responses (breaks HLS/video playback)
+    if (req.path.startsWith('/api/stream')) return false;
+    return compression.filter(req, res);
+  },
+}));
 app.use(express.json({ limit: '1mb' }));
 
 // ── Rate limiting ────────────────────────────────────────────────────────────

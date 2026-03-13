@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 
@@ -10,7 +10,8 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const debounceTimer = useState({ current: null })[0];
+  const debounceTimer = useRef(null);
+  const activeRequest = useRef(0);
 
   const doSearch = useCallback((q) => {
     if (q.length < 2) {
@@ -20,17 +21,21 @@ export default function Search() {
     }
     setLoading(true);
     setSearched(true);
+    const requestId = ++activeRequest.current;
     api.searchStreams(connId, q).then(data => {
+      if (requestId !== activeRequest.current) return; // stale
       setResults(data || []);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => {
+      if (requestId === activeRequest.current) setLoading(false);
+    });
   }, [connId]);
 
   const handleChange = (e) => {
     const val = e.target.value;
     setQuery(val);
     clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => doSearch(val), 400);
+    debounceTimer.current = setTimeout(() => doSearch(val), 200);
   };
 
   const getPlayerUrl = (item) => {

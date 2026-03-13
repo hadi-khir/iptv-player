@@ -1,6 +1,43 @@
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// Search index: pre-lowercased names for fast searching
+const searchIndexes = new Map();
+const SEARCH_INDEX_TTL = 5 * 60 * 1000;
+
+function getSearchIndex(connKey) {
+  const entry = searchIndexes.get(connKey);
+  if (entry && Date.now() - entry.time < SEARCH_INDEX_TTL) return entry;
+  return null;
+}
+
+export async function buildSearchIndex(conn) {
+  const connKey = conn.server_url + conn.username;
+  const existing = getSearchIndex(connKey);
+  if (existing) return existing;
+
+  const [live, vod, series] = await Promise.all([
+    getLiveStreams(conn).catch(() => []),
+    getVodStreams(conn).catch(() => []),
+    getSeries(conn).catch(() => []),
+  ]);
+
+  const items = [];
+  for (const s of (live || [])) {
+    if (s.name) items.push({ ...s, type: 'live', _name: s.name.toLowerCase() });
+  }
+  for (const s of (vod || [])) {
+    if (s.name) items.push({ ...s, type: 'movie', _name: s.name.toLowerCase() });
+  }
+  for (const s of (series || [])) {
+    if (s.name) items.push({ ...s, type: 'series', _name: s.name.toLowerCase() });
+  }
+
+  const entry = { items, time: Date.now() };
+  searchIndexes.set(connKey, entry);
+  return entry;
+}
+
 // Block requests to private/internal networks (SSRF protection)
 const BLOCKED_HOSTS = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|localhost|::1|\[::1\])/i;
 

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as api from '../api';
+import useInfiniteScroll from '../hooks/useInfiniteScroll';
 
 export default function VOD() {
   const { connId } = useParams();
@@ -48,9 +49,13 @@ export default function VOD() {
     }
   };
 
-  const filtered = searchTerm
-    ? streams.filter(s => s.name?.toLowerCase().includes(searchTerm.toLowerCase()))
-    : streams;
+  const filtered = useMemo(() => {
+    if (!searchTerm) return streams;
+    const term = searchTerm.toLowerCase();
+    return streams.filter(s => s.name?.toLowerCase().includes(term));
+  }, [streams, searchTerm]);
+
+  const { visibleItems, hasMore, sentinelRef } = useInfiniteScroll(filtered);
 
   return (
     <div className="flex h-full">
@@ -105,7 +110,7 @@ export default function VOD() {
             <div className="text-center py-20 text-gray-500">No movies found</div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {filtered.map(stream => (
+              {visibleItems.map(stream => (
                 <div
                   key={stream.stream_id}
                   className="group bg-surface-800 rounded-xl border border-surface-600/30 hover:border-accent/30 transition-all cursor-pointer overflow-hidden"
@@ -153,6 +158,7 @@ export default function VOD() {
               ))}
             </div>
           )}
+          {hasMore && <div ref={sentinelRef} className="h-4" />}
         </div>
       </div>
     </div>
