@@ -7,15 +7,8 @@ services:
       - "3000:3000"
     volumes:
       - iptv-data:/app/data
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      # Set a strong secret: openssl rand -base64 48
-      # If omitted, one is auto-generated on first boot
-      - JWT_SECRET=
-      # Set to 'false' after creating your account(s)
-      - ALLOW_REGISTRATION=true
-      - MIN_PASSWORD_LENGTH=8
+    env_file:
+      - .env
 
 volumes:
   iptv-data:
