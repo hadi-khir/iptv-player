@@ -54,7 +54,24 @@ export function initDb() {
       FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS watch_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      connection_id INTEGER NOT NULL,
+      stream_id INTEGER NOT NULL,
+      stream_type TEXT NOT NULL DEFAULT 'live',
+      name TEXT,
+      stream_icon TEXT,
+      position REAL DEFAULT 0,
+      duration REAL DEFAULT 0,
+      watched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, connection_id, stream_id, stream_type),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
     CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id);
+    CREATE INDEX IF NOT EXISTS idx_watch_history_user ON watch_history(user_id);
   `);
 }

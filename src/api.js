@@ -72,6 +72,18 @@ export const removeFavorite = (id) =>
 export const removeFavoriteByStream = (connId, streamId, streamType) =>
   request(`/favorites/stream/${connId}/${streamId}/${streamType}`, { method: 'DELETE' });
 
+// Watch History
+export const getWatchHistory = () => request('/history');
+
+export const saveWatchProgress = (data) =>
+  request('/history', { method: 'POST', body: JSON.stringify(data) });
+
+export const getWatchProgress = (connId, streamId, streamType) =>
+  request(`/history/${connId}/${streamId}/${streamType}`);
+
+export const deleteHistoryEntry = (id) =>
+  request(`/history/${id}`, { method: 'DELETE' });
+
 // Stream URLs - fetches proxy URLs from backend (credentials stay server-side)
 export const getStreamUrls = (connId, type, streamId, containerExt) => {
   const token = getToken();

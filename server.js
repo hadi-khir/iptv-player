@@ -10,6 +10,7 @@ import authRoutes from './server/routes/auth.js';
 import connectionRoutes from './server/routes/connections.js';
 import channelRoutes from './server/routes/channels.js';
 import favoriteRoutes from './server/routes/favorites.js';
+import historyRoutes from './server/routes/history.js';
 import streamRoutes from './server/routes/stream.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/connections', apiLimiter, connectionRoutes);
 app.use('/api/channels', apiLimiter, channelRoutes);
 app.use('/api/favorites', apiLimiter, favoriteRoutes);
+app.use('/api/history', apiLimiter, historyRoutes);
 app.use('/api/stream', streamRoutes);
 
 // ── Static / SPA ─────────────────────────────────────────────────────────────

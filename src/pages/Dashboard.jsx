@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import * as api from '../api';
 
@@ -9,6 +9,11 @@ export default function Dashboard() {
   const [form, setForm] = useState({ name: '', server_url: '', username: '', password: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    api.getWatchHistory().then(setHistory).catch(() => {});
+  }, []);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -114,6 +119,69 @@ export default function Dashboard() {
             {loading ? 'Connecting...' : 'Add Connection'}
           </button>
         </form>
+      )}
+
+      {/* Recently Watched */}
+      {history.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-white mb-4">Recently Watched</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {history.map((item) => {
+              const progress = item.duration > 0 ? Math.min((item.position / item.duration) * 100, 100) : 0;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() =>
+                    navigate(`/player/${item.connection_id}/${item.stream_type}/${item.stream_id}`, {
+                      state: { title: item.name, streamIcon: item.stream_icon },
+                    })
+                  }
+                  className="bg-surface-800 rounded-lg border border-surface-600/30 hover:border-accent/40 transition-colors text-left group overflow-hidden"
+                >
+                  <div className="aspect-video bg-surface-700 flex items-center justify-center relative overflow-hidden">
+                    {item.stream_icon ? (
+                      <img
+                        src={item.stream_icon}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                    ) : (
+                      <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                      </svg>
+                    )}
+                    {/* Play overlay */}
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                      <svg className="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </div>
+                    {/* Progress bar */}
+                    {progress > 0 && item.stream_type !== 'live' && (
+                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
+                        <div className="h-full bg-accent" style={{ width: `${progress}%` }} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-2.5">
+                    <p className="text-sm text-white truncate font-medium">{item.name}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        item.stream_type === 'live' ? 'bg-red-500/15 text-red-400' :
+                        item.stream_type === 'movie' ? 'bg-blue-500/15 text-blue-400' :
+                        'bg-purple-500/15 text-purple-400'
+                      }`}>
+                        {item.stream_type === 'live' ? 'Live' : item.stream_type === 'movie' ? 'Movie' : 'Series'}
+                      </span>
+                      <span className="text-xs text-gray-500 truncate">{item.connection_name}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {connections.length === 0 ? (

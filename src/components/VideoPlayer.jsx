@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 
-export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
+export default function VideoPlayer({ urls, type = 'live', connId, streamId, initialPosition = 0, onProgress }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -267,6 +267,35 @@ export default function VideoPlayer({ urls, type = 'live', connId, streamId }) {
       video.removeEventListener('playing', onPlaying);
     };
   }, [status]);
+
+  // Seek to saved position once video is ready
+  const seekedRef = useRef(false);
+  useEffect(() => {
+    if (!initialPosition || type === 'live' || seekedRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const onReady = () => {
+      if (!seekedRef.current && video.duration > 0 && initialPosition < video.duration - 5) {
+        video.currentTime = initialPosition;
+        seekedRef.current = true;
+      }
+      video.removeEventListener('loadedmetadata', onReady);
+    };
+    video.addEventListener('loadedmetadata', onReady);
+    return () => video.removeEventListener('loadedmetadata', onReady);
+  }, [initialPosition, type]);
+
+  // Report progress periodically
+  useEffect(() => {
+    if (!onProgress || type === 'live') return;
+    const interval = setInterval(() => {
+      const video = videoRef.current;
+      if (video && video.currentTime > 0 && isFinite(video.duration)) {
+        onProgress(video.currentTime, video.duration);
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [onProgress, type]);
 
   const resetHideTimer = () => {
     setShowControls(true);

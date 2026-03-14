@@ -16,6 +16,7 @@ export default function Player() {
   const [error, setError] = useState(null);
   const [isFavorite, setIsFavorite] = useState(false);
   const [favoriteId, setFavoriteId] = useState(null);
+  const [savedPosition, setSavedPosition] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -49,7 +50,37 @@ export default function Player() {
         }
       }).catch(() => {});
     }
+
+    // Load saved watch position for VOD content
+    if (type !== 'live') {
+      api.getWatchProgress(connId, streamId, type).then(data => {
+        if (data?.position > 0) setSavedPosition(data.position);
+      }).catch(() => {});
+    }
+
+    // Record that we started watching
+    api.saveWatchProgress({
+      connection_id: parseInt(connId),
+      stream_id: parseInt(streamId),
+      stream_type: type,
+      name: streamTitle || `Stream ${streamId}`,
+      stream_icon: streamIcon || '',
+      position: 0,
+      duration: 0,
+    }).catch(() => {});
   }, [connId, type, streamId]);
+
+  const handleProgress = useCallback((position, duration) => {
+    api.saveWatchProgress({
+      connection_id: parseInt(connId),
+      stream_id: parseInt(streamId),
+      stream_type: type,
+      name: streamTitle || `Stream ${streamId}`,
+      stream_icon: streamIcon || '',
+      position,
+      duration,
+    }).catch(() => {});
+  }, [connId, streamId, type, streamTitle, streamIcon]);
 
   const toggleFavorite = async () => {
     if (isFavorite && favoriteId) {
@@ -130,6 +161,8 @@ export default function Player() {
             type={type}
             connId={connId}
             streamId={streamId}
+            initialPosition={savedPosition}
+            onProgress={handleProgress}
           />
         ) : null}
       </div>
