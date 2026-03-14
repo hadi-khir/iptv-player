@@ -5,9 +5,12 @@ import { authMiddleware } from '../auth.js';
 const router = Router();
 router.use(authMiddleware);
 
-// Get recent watch history (last 20 items)
+// Get recent watch history (last 20 items, deduplicated by series)
 router.get('/', (req, res) => {
   const db = getDb();
+  // For series episodes, only show the most recently watched episode per series.
+  // We do this by fetching all history ordered by watched_at DESC, then deduplicating
+  // in application code by series_id (since SQLite window functions are verbose).
   const history = db
     .prepare(
       `SELECT wh.*, c.name as connection_name
@@ -15,33 +18,49 @@ router.get('/', (req, res) => {
        JOIN connections c ON c.id = wh.connection_id
        WHERE wh.user_id = ?
        ORDER BY wh.watched_at DESC
-       LIMIT 20`
+       LIMIT 50`
     )
     .all(req.user.id);
-  res.json(history);
+
+  // Deduplicate: for entries with the same series_id, keep only the most recent
+  const seen = new Set();
+  const deduplicated = [];
+  for (const item of history) {
+    if (item.series_id) {
+      const key = `${item.connection_id}:${item.series_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    deduplicated.push(item);
+    if (deduplicated.length >= 20) break;
+  }
+
+  res.json(deduplicated);
 });
 
 // Upsert watch progress
 router.post('/', (req, res) => {
   try {
-    const { connection_id, stream_id, stream_type, name, stream_icon, position, duration } = req.body;
+    const { connection_id, stream_id, stream_type, series_id, name, stream_icon, position, duration } = req.body;
     if (!connection_id || !stream_id) {
       return res.status(400).json({ error: 'connection_id and stream_id required' });
     }
 
     const db = getDb();
     db.prepare(
-      `INSERT INTO watch_history (user_id, connection_id, stream_id, stream_type, name, stream_icon, position, duration, watched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `INSERT INTO watch_history (user_id, connection_id, stream_id, stream_type, series_id, name, stream_icon, position, duration, watched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(user_id, connection_id, stream_id, stream_type)
        DO UPDATE SET position = excluded.position, duration = excluded.duration,
                      name = excluded.name, stream_icon = excluded.stream_icon,
+                     series_id = excluded.series_id,
                      watched_at = CURRENT_TIMESTAMP`
     ).run(
       req.user.id,
       connection_id,
       stream_id,
       stream_type || 'live',
+      series_id || null,
       name || '',
       stream_icon || '',
       position || 0,

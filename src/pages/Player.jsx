@@ -10,6 +10,7 @@ export default function Player() {
   const containerExt = location.state?.containerExt;
   const streamTitle = location.state?.title;
   const streamIcon = location.state?.streamIcon;
+  const seriesId = location.state?.seriesId || null;
   const [epg, setEpg] = useState(null);
   const [streamUrls, setStreamUrls] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +64,7 @@ export default function Player() {
       connection_id: parseInt(connId),
       stream_id: parseInt(streamId),
       stream_type: type,
+      series_id: seriesId,
       name: streamTitle || `Stream ${streamId}`,
       stream_icon: streamIcon || '',
       position: 0,
@@ -75,12 +77,13 @@ export default function Player() {
       connection_id: parseInt(connId),
       stream_id: parseInt(streamId),
       stream_type: type,
+      series_id: seriesId,
       name: streamTitle || `Stream ${streamId}`,
       stream_icon: streamIcon || '',
       position,
       duration,
     }).catch(() => {});
-  }, [connId, streamId, type, streamTitle, streamIcon]);
+  }, [connId, streamId, type, seriesId, streamTitle, streamIcon]);
 
   const toggleFavorite = async () => {
     if (isFavorite && favoriteId) {

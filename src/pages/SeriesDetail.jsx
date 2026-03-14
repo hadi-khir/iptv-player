@@ -137,7 +137,7 @@ export default function SeriesDetail() {
             <div
               key={ep.id}
               className="flex items-center gap-4 bg-surface-800 rounded-xl p-4 border border-surface-600/30 hover:border-accent/30 transition-colors cursor-pointer"
-              onClick={() => navigate(`/player/${connId}/series/${ep.id}`, { state: { containerExt: ep.container_extension, title: ep.title } })}
+              onClick={() => navigate(`/player/${connId}/series/${ep.id}`, { state: { containerExt: ep.container_extension, title: ep.title, seriesId: parseInt(seriesId), streamIcon: seriesInfo.cover || '' } })}
             >
               <div className="w-40 aspect-video bg-surface-700 rounded-lg overflow-hidden flex-shrink-0 relative group">
                 {ep.info?.movie_image ? (

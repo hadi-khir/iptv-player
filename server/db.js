@@ -60,6 +60,7 @@ export function initDb() {
       connection_id INTEGER NOT NULL,
       stream_id INTEGER NOT NULL,
       stream_type TEXT NOT NULL DEFAULT 'live',
+      series_id INTEGER,
       name TEXT,
       stream_icon TEXT,
       position REAL DEFAULT 0,
@@ -74,4 +75,10 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id);
     CREATE INDEX IF NOT EXISTS idx_watch_history_user ON watch_history(user_id);
   `);
+
+  // Migration: add series_id column if table existed before this column was added
+  const cols = database.prepare("PRAGMA table_info(watch_history)").all();
+  if (!cols.find(c => c.name === 'series_id')) {
+    database.prepare("ALTER TABLE watch_history ADD COLUMN series_id INTEGER").run();
+  }
 }
